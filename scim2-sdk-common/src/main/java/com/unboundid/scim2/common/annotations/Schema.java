@@ -23,7 +23,13 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Class level annotation indicating the schema of a SCIM object.
+ * This represents a class-level annotation that indicates the schema
+ * information of a SCIM object.
+ * <br><br>
+ * As an example, this annotation is used by the
+ * {@link com.unboundid.scim2.common.messages.ListResponse} class to explicitly
+ * define its schema URN. The URN specified by the {@code id} field is used by
+ * Jackson when deserializing the object into a String.
  */
 @Target(value = ElementType.TYPE)
 @Retention(value = RetentionPolicy.RUNTIME)
@@ -44,8 +50,7 @@ public @interface Schema
   String description();
 
   /**
-   * The name for the object.  This is a human readable
-   * name.
+   * The human-readable name for the object.
    *
    * @return The object's human-readable name.
    */

@@ -27,7 +27,16 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation for getter methods of a SCIM object.
+ * This class is used to record and display useful properties about attributes
+ * of SCIM resources. This helps display information about the attribute
+ * definitions on member variables of a class that represents a SCIM resource.
+ * These definitions include information about the field, such as whether the
+ * value is mutable on a SCIM resource, or if it must be present when the
+ * resource is created (i.e., required).
+ * <br><br>
+ * As an example, the {@link com.unboundid.scim2.common.types.UserResource}
+ * class adds this annotation to member variables, which highlights the
+ * attribute definitions that are defined in RFC 7643.
  */
 @Retention(value = RetentionPolicy.RUNTIME)
 @Target(value = ElementType.FIELD)
@@ -89,8 +98,8 @@ public @interface Attribute
    *
    * @return The mutability constraint for the attribute.
    */
-  AttributeDefinition.Mutability mutability() default
-      AttributeDefinition.Mutability.READ_WRITE;
+  AttributeDefinition.Mutability mutability()
+      default AttributeDefinition.Mutability.READ_WRITE;
 
   /**
    * If the attribute is multi-value, this holds the type of the
@@ -98,5 +107,5 @@ public @interface Attribute
    *
    * @return For a multi-valued attribute, the type of the child object.
    */
-  Class multiValueClass() default NullType.class;
+  Class<?> multiValueClass() default NullType.class;
 }
