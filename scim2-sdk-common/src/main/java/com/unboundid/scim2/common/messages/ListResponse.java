@@ -79,7 +79,7 @@ public final class ListResponse<T> extends BaseScimResource
   public ListResponse(final Map<String,Object> props)
   {
     final Map<String,Object> properties =
-      new TreeMap<String, Object>(String.CASE_INSENSITIVE_ORDER);
+      new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     properties.putAll(props);
 
     checkRequiredProperties(properties, "totalResults", "resources");
@@ -274,5 +274,4 @@ public final class ListResponse<T> extends BaseScimResource
       }
     }
   }
-
 }
