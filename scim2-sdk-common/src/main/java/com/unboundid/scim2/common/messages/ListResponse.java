@@ -38,9 +38,31 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Class representing a SCIM 2 list response.
+ * This class represents a SCIM 2 list response. A list response represents a
+ * list of results with some additional information.
+ * <br><br>
+ * List responses are paginated if the SCIM service provider supports this. This
+ * means that if the number of results for a query is very large, the service
+ * provider will return an initial subset of users.
+ * <br><br>
+ * List responses have the following fields:
+ * <ul>
+ *   <li> {@code Resources}: An array containing the list of results returned.
  *
- * @param <T> The type of the returned resources.
+ *   <li> {@code itemsPerPage}: Indicates the number of results in the
+ *        {@code Resources} array.
+ *
+ *   <li> {@code totalResults}: Indicates the total number of results for the
+ *        query. If all of the results are present within the Resources
+ *        array, then this value will be equivalent to {@code itemsPerPage}.
+ *
+ *   <li> {@code startIndex}: The index indicating the page number that is
+ *         desired, if pagination is supported.
+ * </ul>
+ * <br><br>
+ * When a client requests some data from a SCIM service provider, it can result
+ * in a large number of results. Since service providers are not expected to
+ * return very large amounts of resources in a single response,
  */
 @Schema(id="urn:ietf:params:scim:api:messages:2.0:ListResponse",
     name="List Response", description = "SCIM 2.0 List Response")
