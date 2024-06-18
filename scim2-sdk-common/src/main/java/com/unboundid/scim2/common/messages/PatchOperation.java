@@ -42,6 +42,7 @@ import com.unboundid.scim2.common.exceptions.ScimException;
 import com.unboundid.scim2.common.filters.EqualFilter;
 import com.unboundid.scim2.common.filters.Filter;
 import com.unboundid.scim2.common.filters.FilterType;
+import com.unboundid.scim2.common.utils.FilterEvaluator;
 import com.unboundid.scim2.common.utils.JsonUtils;
 import com.unboundid.scim2.common.utils.SchemaUtils;
 
@@ -377,7 +378,7 @@ public abstract class PatchOperation
         @NotNull final Path path,
         @NotNull final ObjectNode existingResource,
         @NotNull final JsonNode value)
-            throws BadRequestException
+            throws ScimException
     {
       Filter valueFilter = path.getElement(0).getValueFilter();
       String filterAttributeName = valueFilter.getAttributePath().toString();
@@ -405,13 +406,45 @@ public abstract class PatchOperation
       }
       ArrayNode attribute = (ArrayNode) jsonAttribute;
 
-      // Construct the new attribute value that should be added to the resource.
-      ObjectNode newValue = JsonUtils.getJsonNodeFactory().objectNode();
-      newValue.set(subAttributeName, value);
-      newValue.set(filterAttributeName, filterValue);
+      ObjectNode matchedValue = null;
+      for (var arrayVal : attribute)
+      {
+        if (FilterEvaluator.evaluate(valueFilter, arrayVal))
+        {
+          if (matchedValue != null)
+          {
+            throw BadRequestException.invalidPath("The operation could not be "
+                + "applied on the resource because the value filter matched"
+                + " more than one element in the '" + attributeName + "' array"
+                + " of the resource.");
+          }
+          matchedValue = (ObjectNode) arrayVal;
+        }
+      }
 
-      attribute.add(newValue);
-      existingResource.replace(attributeName, attribute);
+      // If there are no matched values, then we should add the two attribute
+      // values to the array.
+      if (matchedValue == null)
+      {
+        // Construct the new attribute value that should be added to the resource.
+        ObjectNode newValue = JsonUtils.getJsonNodeFactory().objectNode();
+        newValue.set(subAttributeName, value);
+        newValue.set(filterAttributeName, filterValue);
+
+        attribute.add(newValue);
+        existingResource.replace(attributeName, attribute);
+        return;
+      }
+
+      // Ensure that the add does not conflict with an existing value.
+      if (FilterEvaluator.evaluate(Filter.pr(subAttributeName), matchedValue))
+      {
+        throw BadRequestException.invalidPath("The add operation failed"
+            + " since the '" + subAttributeName + "' attribute already contains"
+            + " a value.");
+      }
+
+      matchedValue.set(subAttributeName, value);
     }
 
     /**
