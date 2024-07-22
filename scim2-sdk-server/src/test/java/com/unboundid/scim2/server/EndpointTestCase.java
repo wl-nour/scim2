@@ -778,54 +778,68 @@ public class EndpointTestCase extends JerseyTestNg.ContainerPerClassTest
     WebTarget target = target().register(
         new JacksonJsonProvider(JsonUtils.createObjectMapper()));
 
-    Response response = target.path("SingletonUsers").request().
-        accept(MEDIA_TYPE_SCIM).post(
-        Entity.entity("{badJson}", MEDIA_TYPE_SCIM));
-    assertEquals(response.getStatus(), 400);
-    assertEquals(response.getMediaType(), MediaType.valueOf(MEDIA_TYPE_SCIM));
-    ErrorResponse errorResponse = response.readEntity(ErrorResponse.class);
-    assertEquals(errorResponse.getStatus(), Integer.valueOf(400));
-    assertEquals(errorResponse.getScimType(), "invalidSyntax");
-    assertNotNull(errorResponse.getDetail());
+    var request = target.path("SingletonUsers").request().
+        accept(MEDIA_TYPE_SCIM);
+
+    try (Response response = request.post(
+        Entity.entity("{badJson}", MEDIA_TYPE_SCIM)))
+    {
+      assertEquals(response.getStatus(), 400);
+      assertEquals(response.getMediaType(), MediaType.valueOf(MEDIA_TYPE_SCIM));
+      ErrorResponse errorResponse = response.readEntity(ErrorResponse.class);
+      assertEquals(errorResponse.getStatus(), Integer.valueOf(400));
+      assertEquals(errorResponse.getScimType(), "invalidSyntax");
+      assertNotNull(errorResponse.getDetail());
+    }
 
     // Now with application/json
-    response = target.path("SingletonUsers").request().
+    request = target.path("SingletonUsers").request().
         accept(MediaType.APPLICATION_JSON_TYPE,
-            ServerUtils.MEDIA_TYPE_SCIM_TYPE).post(
-        Entity.entity("{badJson}", MediaType.APPLICATION_JSON_TYPE));
-    assertEquals(response.getStatus(), 400);
-    assertEquals(response.getMediaType(), MediaType.APPLICATION_JSON_TYPE);
+            ServerUtils.MEDIA_TYPE_SCIM_TYPE);
+
+    try (Response response = request.post(
+        Entity.entity("{badJson}", MediaType.APPLICATION_JSON_TYPE)))
+    {
+      assertEquals(response.getStatus(), 400);
+      assertEquals(response.getMediaType(), MediaType.APPLICATION_JSON_TYPE);
+    }
   }
 
   /**
    * Test error response when an invalid standard SCIM message is submitted and
    * a Jackson binding error occurs.
-   *
-   * @throws ScimException if an error occurs.
    */
   @Test
-  public void testInvalidMessage() throws ScimException
+  public void testInvalidMessage()
   {
     WebTarget target = target().register(
         new JacksonJsonProvider(JsonUtils.createObjectMapper()));
 
-    Response response = target.path("SingletonUsers").path(".search").
-        request().accept(MEDIA_TYPE_SCIM).post(Entity.entity(
-        "{\"undefinedField\": \"value\"}", MEDIA_TYPE_SCIM));
-    assertEquals(response.getStatus(), 400);
-    assertEquals(response.getMediaType(), MediaType.valueOf(MEDIA_TYPE_SCIM));
-    ErrorResponse errorResponse = response.readEntity(ErrorResponse.class);
-    assertEquals(errorResponse.getStatus(), Integer.valueOf(400));
-    assertEquals(errorResponse.getScimType(), "invalidSyntax");
-    assertNotNull(errorResponse.getDetail());
+    var request = target.path("SingletonUsers").path(".search").
+        request().accept(MEDIA_TYPE_SCIM);
 
-    // Now with application/json
-    response = target.path("SingletonUsers").path(".search").
-        request().accept(MediaType.APPLICATION_JSON_TYPE,
-        ServerUtils.MEDIA_TYPE_SCIM_TYPE).post(Entity.entity(
-        "{\"undefinedField\": \"value\"}", MediaType.APPLICATION_JSON_TYPE));
-    assertEquals(response.getStatus(), 400);
-    assertEquals(response.getMediaType(), MediaType.APPLICATION_JSON_TYPE);
+    try (Response response = request.post(Entity.entity(
+        "{\"undefinedField\": \"value\"}", MEDIA_TYPE_SCIM)))
+    {
+      assertEquals(response.getStatus(), 400);
+      assertEquals(response.getMediaType(), MediaType.valueOf(MEDIA_TYPE_SCIM));
+      ErrorResponse errorResponse = response.readEntity(ErrorResponse.class);
+      assertEquals(errorResponse.getStatus(), Integer.valueOf(400));
+      assertEquals(errorResponse.getScimType(), "invalidSyntax");
+      assertNotNull(errorResponse.getDetail());
+    }
+
+      // Now with application/json
+      request = target.path("SingletonUsers").path(".search").
+          request().accept(MediaType.APPLICATION_JSON_TYPE,
+              ServerUtils.MEDIA_TYPE_SCIM_TYPE);
+
+    try (Response response = request.post(Entity.entity(
+        "{\"undefinedField\": \"value\"}", MediaType.APPLICATION_JSON_TYPE)))
+    {
+      assertEquals(response.getStatus(), 400);
+      assertEquals(response.getMediaType(), MediaType.APPLICATION_JSON_TYPE);
+    }
   }
 
   /**
