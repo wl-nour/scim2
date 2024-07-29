@@ -93,6 +93,7 @@ public final class OrFilter extends CombiningFilter
    * @return    {@code true} if the provided object is equal to this OR filter,
    *            or {@code false} if not.
    */
+  @SuppressWarnings("SlowListContainsAll")
   @Override
   public boolean equals(@Nullable final Object o)
   {
@@ -100,19 +101,18 @@ public final class OrFilter extends CombiningFilter
     {
       return true;
     }
-    if (o == null || getClass() != o.getClass())
+    if (!(o instanceof OrFilter))
     {
       return false;
     }
 
-    CombiningFilter that = (CombiningFilter) o;
-
-    if (!getCombinedFilters().containsAll(that.getCombinedFilters()))
+    OrFilter that = (OrFilter) o;
+    if (getCombinedFilters().size() != that.getCombinedFilters().size())
     {
       return false;
     }
 
-    return true;
+    return getCombinedFilters().containsAll(that.getCombinedFilters());
   }
 
   /**
