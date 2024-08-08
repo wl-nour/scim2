@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2023 Ping Identity Corporation
+ * Copyright 2015-2024 Ping Identity Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License (GPLv2 only)
@@ -32,11 +32,16 @@ import com.fasterxml.jackson.databind.node.IntNode;
 import com.fasterxml.jackson.databind.node.LongNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.fasterxml.jackson.databind.node.ValueNode;
 import com.unboundid.scim2.common.GenericScimResource;
 import com.unboundid.scim2.common.Path;
+import com.unboundid.scim2.common.annotations.NotNull;
+import com.unboundid.scim2.common.annotations.Nullable;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.exceptions.ScimException;
+import com.unboundid.scim2.common.filters.EqualFilter;
 import com.unboundid.scim2.common.filters.Filter;
+import com.unboundid.scim2.common.filters.FilterType;
 import com.unboundid.scim2.common.utils.JsonUtils;
 import com.unboundid.scim2.common.utils.SchemaUtils;
 
@@ -49,7 +54,59 @@ import java.util.List;
 import static com.unboundid.scim2.common.utils.StaticUtils.toList;
 
 /**
- * An individual patch operation.
+ * This class represents a SCIM 2 PATCH operation. A patch operation is a
+ * component of a {@link PatchRequest}, and it represents an individual update
+ * to a SCIM resource. A patch operation must be one of the following types:
+ * <ul>
+ *   <li> add
+ *   <li> remove
+ *   <li> replace
+ * </ul>
+ *
+ * An {@code add} operation will add new attribute data. A {@code remove}
+ * operation will delete the existing value(s) on an attribute. A
+ * {@code replace} operation will overwrite any existing values of an attribute.
+ * <br><br>
+ *
+ * To create an {@code add} operation, use methods of the following form:
+ * <pre>
+ *   PatchOperation.addIntegerValues(path, 512);
+ *   PatchOperation.addStringValues(path, "Kingdom Tears");
+ *   PatchOperation.add(path, jsonNodeValue);
+ * </pre>
+ *
+ * To create a {@code remove} operation, use the following method:
+ * <pre>
+ *   PatchOperation.remove(path);
+ * </pre>
+ *
+ * To create a {@code replace} operation, use methods of the following form:
+ * <pre>
+ *   PatchOperation.replace(path, 512);
+ *   PatchOperation.replace(path, "Kingdom Tears");
+ *   PatchOperation.replace(path, true);
+ *   PatchOperation.replace(path, jsonNodeValue);
+ * </pre>
+ *
+ * To create a patch operation in an alternative way, use the {@link #create}
+ * static method. This method is useful if the operation type is not known at
+ * compile time.
+ * <pre>
+ *   PatchOperation.create(operationType, path, jsonNodeValue);
+ * </pre>
+ *
+ * Note that many of the helper methods for {@code add} and {@code replace}
+ * operations do not accept a {@code null} path because they are intended for
+ * targeting an attribute value. For example, to replace a user's email, the
+ * following method may be used:
+ * <pre>
+ *   PatchOperation.replace("emails", "muhammad.ali@example.com")
+ * </pre>
+ * If a {@code null} path is needed for an {@code add} or {@code replace}
+ * operation, then use the {@link #add(JsonNode)} and
+ * {@link #replace(ObjectNode)} methods.
+ *
+ * @see PatchRequest
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME,
     include = JsonTypeInfo.As.PROPERTY,
@@ -63,8 +120,16 @@ import static com.unboundid.scim2.common.utils.StaticUtils.toList;
         name="replace", names= {"replace", "Replace", "REPLACE"})})
 public abstract class PatchOperation
 {
+  // The attribute path that is targeted by the patch operation (i.e., the
+  // attribute that should be updated. Note that this is an optional field for
+  // add and replace operations, but it is mandatory for remove operations.
+  @Nullable
+  private final Path path;
+
+
   static final class AddOperation extends PatchOperation
   {
+    @NotNull
     @JsonProperty
     private final JsonNode value;
 
@@ -77,24 +142,14 @@ public abstract class PatchOperation
      */
     @JsonCreator
     private AddOperation(
-        @JsonProperty(value = "path") final Path path,
-        @JsonProperty(value = "value", required = true) final JsonNode value)
-        throws ScimException
+        @Nullable @JsonProperty(value = "path")
+        final Path path,
+        @NotNull @JsonProperty(value = "value", required = true)
+        final JsonNode value)
+            throws ScimException
     {
       super(path);
       validateOperationValue(path, value, getOpType());
-      if (path != null)
-      {
-        for (Path.Element element : path)
-        {
-          if (element.getValueFilter() != null)
-          {
-            throw BadRequestException.invalidPath(
-                "path field for add operations must not include any value " +
-                    "selection filters");
-          }
-        }
-      }
       this.value = value;
     }
 
@@ -102,6 +157,7 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
+    @NotNull
     public PatchOpType getOpType()
     {
       return PatchOpType.ADD;
@@ -111,6 +167,7 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
+    @Nullable
     public JsonNode getJsonNode()
     {
       return value.deepCopy();
@@ -120,7 +177,8 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public <T> T getValue(final Class<T> cls)
+    @Nullable
+    public <T> T getValue(@NotNull final Class<T> cls)
         throws JsonProcessingException, ScimException, IllegalArgumentException
     {
       if(value.isArray())
@@ -136,7 +194,8 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public <T> List<T> getValues(final Class<T> cls)
+    @Nullable
+    public <T> List<T> getValues(@NotNull final Class<T> cls)
         throws JsonProcessingException, ScimException
     {
       ArrayList<T> objects = new ArrayList<T>(value.size());
@@ -151,18 +210,219 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public void apply(final ObjectNode node) throws ScimException
+    public void apply(@NotNull final ObjectNode node) throws ScimException
     {
-      JsonUtils.addValue(getPath() == null ? Path.root() :
-          getPath(), node, value);
+      Path path = (getPath() == null) ? Path.root() : getPath();
+      if (hasValueFilter(path))
+      {
+        validateAddOpWithFilter(path, value);
+        applyAddWithValueFilter(path, node, value);
+      }
+      else
+      {
+        JsonUtils.addValue(path, node, value);
+      }
+
       addMissingSchemaUrns(node);
     }
 
     /**
-     * {@inheritDoc}
+     * Indicates whether the provided attribute path has a value filter in the
+     * first element.
+     */
+    private boolean hasValueFilter(@Nullable final Path path)
+    {
+      return path != null
+          && path.size() > 0
+          && path.getElement(0) != null
+          && path.getElement(0).getValueFilter() != null;
+    }
+
+    /**
+     * Validates an add operation with a value selection filter. For more
+     * information, see {@link #applyAddWithValueFilter}.
+     * <p>
+     * This method imposes the following constraints:
+     * <ul>
+     *   <li> The value filter must be in the first element in the path.
+     *   <li> The value filter must be an {@link EqualFilter}. Paths such as
+     *        {@code addresses[type ne "home"]} are ambiguous and do not specify
+     *        the value that should be assigned to the {@code type} field.
+     *   <li> The attribute path must contain more than one element. In other
+     *        words, it must be of the form
+     *        {@code addresses[type eq "work"].streetAddress} and cannot be
+     *        {@code addresses[type eq "work"]}.
+     * </ul>
+     *
+     * @param path  The attribute path.
+     * @param value The value that will be assigned to the sub-attribute in the
+     *              path (e.g., {@code streetAddress}).
+     *
+     * @throws BadRequestException  If the value selection filter was in an
+     *                              invalid form for the add operation.
+     */
+    private void validateAddOpWithFilter(@Nullable final Path path,
+                                         @NotNull final JsonNode value)
+        throws BadRequestException
+    {
+      Filter filter;
+      if (path == null || !path.iterator().hasNext())
+      {
+        throw BadRequestException.invalidSyntax(
+            "The patch add operation was expected to contain a non-empty path");
+      }
+      if (value.isArray())
+      {
+        throw BadRequestException.invalidSyntax(
+            "Patch add operations with a filter cannot set the 'value' field to"
+                + " an array");
+      }
+
+      Iterator<Path.Element> it = path.iterator();
+      Path.Element firstElement = it.next();
+      filter = firstElement.getValueFilter();
+
+      FilterType filterType = (filter == null) ? null : filter.getFilterType();
+      if (filterType == null)
+      {
+        throw BadRequestException.invalidPath(
+            "The add operation contained an empty filter"
+        );
+      }
+      if (filterType != FilterType.EQUAL)
+      {
+        throw BadRequestException.invalidPath(String.format(
+            "The add operation contained a value selection filter of type '%s',"
+                + " which is not an equality filter",
+            filterType));
+      }
+      if (!it.hasNext())
+      {
+        // A path with a filter must have a second element to specify the
+        // other value. It may not be 'emails[type eq "work"]', as that would
+        // add only the 'type' field:
+        // "emails": {
+        //     "type": "work"
+        // }
+        //
+        // Since the filter value would be unused, this request is invalid.
+        throw BadRequestException.invalidPath(
+            "A patch operation's attribute path was of the form 'attribute[filter]', but"
+                + " needs to be 'attribute[filter].subAttribute'"
+        );
+      }
+
+      // Ensure there are no other filters in the request.
+      while (it.hasNext())
+      {
+        Path.Element element = it.next();
+        if (element.getValueFilter() != null)
+        {
+          throw BadRequestException.invalidPath(String.format(
+              "Patch add operations are only allowed to contain a single value"
+                  + " selection filter in the top-level attribute name. '%s' is"
+                  + " invalid.",
+              element.getValueFilter()
+          ));
+        }
+      }
+    }
+
+    /**
+     * This method processes an add operation whose attribute path contains a
+     * value selection filter. This operation takes the form of:
+     * <pre>
+     *   {
+     *     "op": "add",
+     *     "path": "addresses[type eq \"work\"].streetAddress",
+     *     "value": "100 Tricky Ghost Avenue"
+     *   }
+     * </pre>
+     *
+     * When this patch operation is applied by a SCIM service provider, it
+     * should result in both the {@code streetAddress} and the {@code type}
+     * fields being appended to the {@code addresses} attribute.
+     * <pre>
+     *   "addresses": [
+     *       {
+     *         "streetAddress": "100 Tricky Ghost Avenue",
+     *         "type": "work"
+     *       }
+     *   ]
+     * </pre>
+     *
+     * While RFC 7644 does not dictate or describe this use case, this
+     * convention is nevertheless used by some SCIM service providers to specify
+     * additional data for a multi-valued parameter, such as a work address or a
+     * home email.
+     * <br><br>
+     * Note that filters in attribute paths are treated differently for other
+     * types of patch operations. For example, a {@code remove} operation with a
+     * path of {@code addresses[type eq "work"]} would only delete address
+     * values that contain a {@code "type": "work"} field. In other words, these
+     * filters are normally used to modify a subset of multi-valued attributes,
+     * but the use case for add operations is unique.
+     *
+     * @param path              The attribute path that contains a value filter.
+     *                          This value filter will be added as part of the
+     *                          new attribute value.
+     * @param existingResource  The most recent copy of the resource.
+     * @param value             The new sub-attribute value that should be added
+     *                          to the existing resource.
+     *
+     * @throws BadRequestException  If the operation targets an invalid
+     *                              attribute.
+     */
+    private void applyAddWithValueFilter(
+        @NotNull final Path path,
+        @NotNull final ObjectNode existingResource,
+        @NotNull final JsonNode value)
+            throws BadRequestException
+    {
+      Filter valueFilter = path.getElement(0).getValueFilter();
+      String filterAttributeName = valueFilter.getAttributePath().toString();
+      ValueNode filterValue = valueFilter.getComparisonValue();
+
+      // For an attribute path of the form 'emails[...].value', fetch the
+      // attribute (emails) and the sub-attribute (value).
+      String attributeName = path.getElement(0).getAttribute();
+      String subAttributeName = path.getElement(1).getAttribute();
+
+      JsonNode jsonAttribute = existingResource.get(attributeName);
+      if (jsonAttribute == null)
+      {
+        // There are no existing values for the attribute, so we should add this
+        // value ourselves.
+        jsonAttribute = JsonUtils.getJsonNodeFactory().arrayNode(1);
+      }
+      if (!jsonAttribute.isArray())
+      {
+        throw BadRequestException.invalidSyntax(
+            "The patch operation could not be processed because a complex"
+                + " value selection filter was provided, but '" + attributeName
+                + "' is single-valued"
+        );
+      }
+      ArrayNode attribute = (ArrayNode) jsonAttribute;
+
+      // Construct the new attribute value that should be added to the resource.
+      ObjectNode newValue = JsonUtils.getJsonNodeFactory().objectNode();
+      newValue.set(subAttributeName, value);
+      newValue.set(filterAttributeName, filterValue);
+
+      attribute.add(newValue);
+      existingResource.replace(attributeName, attribute);
+    }
+
+    /**
+     * Indicates whether the provided object is equal to this add operation.
+     *
+     * @param o   The object to compare.
+     * @return    {@code true} if the provided object is equal to this
+     *            operation, or {@code false} if not.
      */
     @Override
-    public boolean equals(final Object o)
+    public boolean equals(@Nullable final Object o)
     {
       if (this == o)
       {
@@ -188,7 +448,9 @@ public abstract class PatchOperation
     }
 
     /**
-     * {@inheritDoc}
+     * Retrieves a hash code for this add operation.
+     *
+     * @return  A hash code for this add operation.
      */
     @Override
     public int hashCode()
@@ -209,8 +471,8 @@ public abstract class PatchOperation
      */
     @JsonCreator
     private RemoveOperation(
-        @JsonProperty(value = "path", required = true) final Path path)
-        throws ScimException
+        @NotNull @JsonProperty(value = "path", required = true) final Path path)
+            throws ScimException
     {
       super(path);
       if(path == null)
@@ -224,6 +486,7 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
+    @NotNull
     public PatchOpType getOpType()
     {
       return PatchOpType.REMOVE;
@@ -233,16 +496,20 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public void apply(final ObjectNode node) throws ScimException
+    public void apply(@NotNull final ObjectNode node) throws ScimException
     {
       JsonUtils.removeValues(getPath(), node);
     }
 
     /**
-     * {@inheritDoc}
+     * Indicates whether the provided object is equal to this remove operation.
+     *
+     * @param o   The object to compare.
+     * @return    {@code true} if the provided object is equal to this
+     *            operation, or {@code false} if not.
      */
     @Override
-    public boolean equals(final Object o)
+    public boolean equals(@Nullable final Object o)
     {
       if (this == o)
       {
@@ -265,7 +532,9 @@ public abstract class PatchOperation
     }
 
     /**
-     * {@inheritDoc}
+     * Retrieves a hash code for this remove operation.
+     *
+     * @return  A hash code for this remove operation.
      */
     @Override
     public int hashCode()
@@ -276,6 +545,7 @@ public abstract class PatchOperation
 
   static final class ReplaceOperation extends PatchOperation
   {
+    @NotNull
     @JsonProperty
     private final JsonNode value;
 
@@ -288,9 +558,11 @@ public abstract class PatchOperation
      */
     @JsonCreator
     private ReplaceOperation(
-        @JsonProperty(value = "path") final Path path,
-        @JsonProperty(value = "value", required = true) final JsonNode value)
-        throws ScimException
+        @Nullable @JsonProperty(value = "path")
+        final Path path,
+        @NotNull @JsonProperty(value = "value", required = true)
+        final JsonNode value)
+            throws ScimException
     {
       super(path);
       validateOperationValue(path, value, getOpType());
@@ -301,6 +573,7 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
+    @NotNull
     public PatchOpType getOpType()
     {
       return PatchOpType.REPLACE;
@@ -310,6 +583,7 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
+    @Nullable
     public JsonNode getJsonNode()
     {
       return value.deepCopy();
@@ -319,7 +593,8 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public <T> T getValue(final Class<T> cls)
+    @Nullable
+    public <T> T getValue(@NotNull final Class<T> cls)
         throws JsonProcessingException, ScimException, IllegalArgumentException
     {
       if(value.isArray())
@@ -334,7 +609,8 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public <T> List<T> getValues(final Class<T> cls)
+    @Nullable
+    public <T> List<T> getValues(@NotNull final Class<T> cls)
         throws JsonProcessingException, ScimException
     {
       ArrayList<T> objects = new ArrayList<T>(value.size());
@@ -349,18 +625,22 @@ public abstract class PatchOperation
      * {@inheritDoc}
      */
     @Override
-    public void apply(final ObjectNode node) throws ScimException
+    public void apply(@NotNull final ObjectNode node) throws ScimException
     {
-      JsonUtils.replaceValue(getPath() == null ? Path.root() :
-          getPath(), node, value);
+      Path path = (getPath() == null) ? Path.root() : getPath();
+      JsonUtils.replaceValue(path, node, value);
       addMissingSchemaUrns(node);
     }
 
     /**
-     * {@inheritDoc}
+     * Indicates whether the provided object is equal to this replace operation.
+     *
+     * @param o   The object to compare.
+     * @return    {@code true} if the provided object is equal to this
+     *            operation, or {@code false} if not.
      */
     @Override
-    public boolean equals(final Object o)
+    public boolean equals(@Nullable final Object o)
     {
       if (this == o)
       {
@@ -387,7 +667,9 @@ public abstract class PatchOperation
     }
 
     /**
-     * {@inheritDoc}
+     * Retrieves a hash code for this replace operation.
+     *
+     * @return  A hash code for this replace operation.
      */
     @Override
     public int hashCode()
@@ -398,22 +680,22 @@ public abstract class PatchOperation
     }
   }
 
-  private final Path path;
+
 
   /**
    * Create a new patch operation.
    *
    * @param path The path targeted by this patch operation.
-   * @throws ScimException If an value is not valid.
+   * @throws ScimException If a value is not valid.
    */
-  PatchOperation(final Path path) throws ScimException
+  PatchOperation(@Nullable final Path path) throws ScimException
   {
     if(path != null)
     {
       if(path.size() > 2)
       {
         throw BadRequestException.invalidPath(
-            "Path can not target sub-attributes more than one level deep");
+            "Path cannot target sub-attributes more than one level deep");
       }
 
       if(path.size() == 2)
@@ -425,7 +707,7 @@ public abstract class PatchOperation
             !valueFilter.getAttributePath().getElement(0).getAttribute().equals("value"))
         {
           throw BadRequestException.invalidPath(
-              "Path can not include a value filter on sub-attributes");
+              "Path cannot include a value filter on sub-attributes");
         }
       }
     }
@@ -438,6 +720,7 @@ public abstract class PatchOperation
    * @return The operation type.
    */
   @JsonIgnore
+  @NotNull
   public abstract PatchOpType getOpType();
 
   /**
@@ -445,6 +728,7 @@ public abstract class PatchOperation
    *
    * @return The path targeted by this operation.
    */
+  @Nullable
   public Path getPath()
   {
     return path;
@@ -458,6 +742,7 @@ public abstract class PatchOperation
    * @return  The value or values of the patch operation, or {@code null}
    *          if this operation is a remove operation.
    */
+  @Nullable
   @JsonIgnore
   public JsonNode getJsonNode()
   {
@@ -478,7 +763,8 @@ public abstract class PatchOperation
    *         value, in which case, the getValues method should be used to
    *         retrieve all values.
    */
-  public <T> T getValue(final Class<T> cls)
+  @Nullable
+  public <T> T getValue(@NotNull final Class<T> cls)
       throws JsonProcessingException, ScimException, IllegalArgumentException
   {
     return null;
@@ -495,7 +781,8 @@ public abstract class PatchOperation
    *         type specified by the Java class object.
    * @throws ScimException If the path is invalid.
    */
-  public <T> List<T> getValues(final Class<T> cls)
+  @Nullable
+  public <T> List<T> getValues(@NotNull final Class<T> cls)
       throws JsonProcessingException, ScimException
   {
     return null;
@@ -508,12 +795,16 @@ public abstract class PatchOperation
    *
    * @throws ScimException If the patch operation is invalid.
    */
-  public abstract void apply(final ObjectNode node) throws ScimException;
+  public abstract void apply(@NotNull final ObjectNode node)
+      throws ScimException;
 
   /**
-   * {@inheritDoc}
+   * Retrieves a string representation of this patch operation.
+   *
+   * @return  A string representation of this patch operation.
    */
   @Override
+  @NotNull
   public String toString()
   {
     try
@@ -533,7 +824,7 @@ public abstract class PatchOperation
    *
    * @param node The ObjectNode to apply this patch operation to.
    */
-  protected void addMissingSchemaUrns(final ObjectNode node)
+  protected void addMissingSchemaUrns(@NotNull final ObjectNode node)
   {
     // Implicitly add the schema URN of any extended attributes to the
     // schemas attribute.
@@ -561,8 +852,8 @@ public abstract class PatchOperation
     }
   }
 
-  private void addSchemaUrnIfMissing(final ArrayNode schemas,
-                                     final String schemaUrn)
+  private void addSchemaUrnIfMissing(@NotNull final ArrayNode schemas,
+                                     @NotNull final String schemaUrn)
   {
     for(JsonNode node : schemas)
     {
@@ -582,7 +873,8 @@ public abstract class PatchOperation
    *
    * @return The new add patch operation.
    */
-  public static PatchOperation add(final JsonNode value)
+  @NotNull
+  public static PatchOperation add(@NotNull final JsonNode value)
   {
     return add((Path) null, value);
   }
@@ -596,7 +888,9 @@ public abstract class PatchOperation
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation add(final String path, final JsonNode value)
+  @NotNull
+  public static PatchOperation add(@Nullable final String path,
+                                   @NotNull final JsonNode value)
       throws ScimException
   {
     return add(Path.fromString(path), value);
@@ -605,13 +899,14 @@ public abstract class PatchOperation
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   * @param path The path targeted by this patch operation.
    * @param value The value(s) to add.
    *
    * @return The new add patch operation.
    */
-  public static PatchOperation add(final Path path, final JsonNode value)
+  @NotNull
+  public static PatchOperation add(@Nullable final Path path,
+                                   @NotNull final JsonNode value)
   {
     try
     {
@@ -623,22 +918,20 @@ public abstract class PatchOperation
     }
   }
 
-  // String
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
+  @NotNull
   public static PatchOperation addStringValues(
-      final String path, final List<String> values) throws ScimException
+      @NotNull final String path,
+      @NotNull final List<String> values)
+          throws ScimException
   {
     return addStringValues(Path.fromString(path), values);
   }
@@ -646,33 +939,39 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addStringValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addStringValues(
-      final String path, final String value1, final String... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addStringValues(@NotNull final String path,
+                                               @NotNull final String value1,
+                                               @Nullable final String... values)
+      throws ScimException
   {
     return addStringValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    */
+  @NotNull
   public static PatchOperation addStringValues(
-      final Path path, final List<String> values)
+      @NotNull final Path path,
+      @NotNull final List<String> values)
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(String value : values)
@@ -685,15 +984,16 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addStringValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    */
-  public static PatchOperation addStringValues(
-      final Path path, final String value1, final String... values)
+  @NotNull
+  public static PatchOperation addStringValues(@Nullable final Path path,
+                                               @NotNull final String value1,
+                                               @Nullable final String... values)
   {
     return addStringValues(path, toList(value1, values));
   }
@@ -701,143 +1001,92 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final String value) throws ScimException
-  {
-    return replace(path, TextNode.valueOf(value));
-  }
-
-  /**
-   * Create a new replace patch operation.
-   *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
-   *
-   * @return The new replace patch operation.
-   */
-  public static PatchOperation replace(
-      final Path path, final String value)
-  {
-    return replace(path, TextNode.valueOf(value));
-  }
-
-  // Boolean
-  /**
-   * Create a new add patch operation.
-   *
-   * @deprecated  Since 2.4.0. Boolean attributes represent data that has one of
-   *              two possible values, so they are single-valued in nature.
-   *              Thus, a multi-valued boolean array is not well-defined, since
-   *              arrays such as {@code [true, false]} do not contain meaningful
-   *              data. Use {@link #replace(String, Boolean)} instead.
-   *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param values The values to add.
-   *
-   * @return The new add patch operation.
-   * @throws ScimException If the path is invalid.
-   */
-  @Deprecated
-  public static PatchOperation addBooleanValues(
-      final String path, final List<Boolean> values) throws ScimException
-  {
-    return addBooleanValues(Path.fromString(path), values);
-  }
-
-  /**
-   * Create a new add patch operation.
-   *
-   * @deprecated  Since 2.4.0. Boolean attributes represent data that has one of
-   *              two possible values, so they are single-valued in nature.
-   *              Thus, a multi-valued boolean array is not well-defined, since
-   *              arrays such as {@code [true, false]} do not contain meaningful
-   *              data. Use {@link #replace(Path, Boolean)} instead.
-   *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param values The values to add.
-   *
-   * @return The new add patch operation.
-   */
-  @Deprecated
-  public static PatchOperation addBooleanValues(
-      final Path path, final List<Boolean> values)
-  {
-    ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
-    for(Boolean value : values)
-    {
-      arrayNode.add(value);
-    }
-    return add(path, arrayNode);
-  }
-
-  /**
-   * Create a new replace patch operation.
-   *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
-   *
-   * @return The new replace patch operation.
-   * @throws ScimException If the path is invalid.
-   */
-  public static PatchOperation replace(
-      final String path, final Boolean value) throws ScimException
-  {
-    return replace(path, BooleanNode.valueOf(value));
-  }
-
-  /**
-   * Create a new replace patch operation.
-   *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
-   *
-   * @return The new replace patch operation.
-   */
-  public static PatchOperation replace(
-      final Path path, final Boolean value)
-  {
-    return replace(path, BooleanNode.valueOf(value));
-  }
-
-
-  // Double
-  /**
-   * Create a new add patch operation.
-   *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param values The values to add.
-   *
-   * @return The new add patch operation.
-   * @throws ScimException If the path is invalid.
-   */
-  public static PatchOperation addDoubleValues(
-      final String path, final List<Double> values)
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final String value)
       throws ScimException
+  {
+    return replace(path, TextNode.valueOf(value));
+  }
+
+  /**
+   * Create a new replace patch operation. The {@code path} must not be
+   * {@code null} since this method is used to target an attribute on a resource
+   * (as opposed to targeting the resource itself). Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
+   *
+   * @return The new replace patch operation.
+   */
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final String value)
+  {
+    return replace(path, TextNode.valueOf(value));
+  }
+
+  /**
+   * Create a new replace patch operation.
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
+   *
+   * @return The new replace patch operation.
+   * @throws ScimException If the path is invalid.
+   */
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final Boolean value)
+      throws ScimException
+  {
+    return replace(path, BooleanNode.valueOf(value));
+  }
+
+  /**
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
+   *
+   * @return The new replace patch operation.
+   */
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final Boolean value)
+  {
+    return replace(path, BooleanNode.valueOf(value));
+  }
+
+
+  /**
+   * Create a new add patch operation.
+   *
+   * @param path The path targeted by this patch operation.
+   * @param values The values to add.
+   *
+   * @return The new add patch operation.
+   * @throws ScimException If the path is invalid.
+   */
+  @NotNull
+  public static PatchOperation addDoubleValues(
+      @NotNull final String path,
+      @NotNull final List<Double> values)
+          throws ScimException
   {
     return addDoubleValues(Path.fromString(path), values);
   }
@@ -845,33 +1094,39 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addDoubleValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addDoubleValues(
-      final String path, final Double value1, final Double... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addDoubleValues(@NotNull final String path,
+                                               @NotNull final Double value1,
+                                               @Nullable final Double... values)
+      throws ScimException
   {
     return addDoubleValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    */
+  @NotNull
   public static PatchOperation addDoubleValues(
-      final Path path, final List<Double> values)
+      @NotNull final Path path,
+      @NotNull final List<Double> values)
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(Double value : values)
@@ -884,34 +1139,37 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addDoubleValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    */
-  public static PatchOperation addDoubleValues(
-      final Path path, final Double value1, final Double... values)
+  @NotNull
+  public static PatchOperation addDoubleValues(@NotNull final Path path,
+                                               @NotNull final Double value1,
+                                               @Nullable final Double... values)
   {
     return addDoubleValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new replace patch operation.
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final Double value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final Double value)
+      throws ScimException
   {
     return replace(path, DoubleNode.valueOf(value));
   }
@@ -919,34 +1177,36 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    */
-  public static PatchOperation replace(
-      final Path path, final Double value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final Double value)
   {
     return replace(path, DoubleNode.valueOf(value));
   }
 
-  // Integer
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
+  @NotNull
   public static PatchOperation addIntegerValues(
-      final String path, final List<Integer> values) throws ScimException
+      @NotNull final String path,
+      @NotNull final List<Integer> values)
+          throws ScimException
   {
     return addIntegerValues(Path.fromString(path), values);
   }
@@ -954,17 +1214,19 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addIntegerValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
+  @NotNull
   public static PatchOperation addIntegerValues(
-      final String path, final Integer value1, final Integer... values)
+      @NotNull final String path,
+      @NotNull final Integer value1,
+      @Nullable final Integer... values)
           throws ScimException
   {
     return addIntegerValues(path, toList(value1, values));
@@ -973,14 +1235,15 @@ public abstract class PatchOperation
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    */
+  @NotNull
   public static PatchOperation addIntegerValues(
-      final Path path, final List<Integer> values)
+      @NotNull final Path path,
+      @NotNull final List<Integer> values)
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(Integer value : values)
@@ -993,34 +1256,38 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addIntegerValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    */
+  @NotNull
   public static PatchOperation addIntegerValues(
-      final Path path, final Integer value1, final Integer... values)
+      @NotNull final Path path,
+      @NotNull final Integer value1,
+      @Nullable final Integer... values)
   {
     return addIntegerValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new replace patch operation.
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final Integer value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final Integer value)
+      throws ScimException
   {
     return replace(path, IntNode.valueOf(value));
   }
@@ -1028,34 +1295,35 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    */
-  public static PatchOperation replace(
-      final Path path, final Integer value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final Integer value)
   {
     return replace(path, IntNode.valueOf(value));
   }
 
-  // Long
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation addLongValues(
-      final String path, final List<Long> values) throws ScimException
+  @NotNull
+  public static PatchOperation addLongValues(@NotNull final String path,
+                                             @NotNull final List<Long> values)
+      throws ScimException
   {
     return addLongValues(Path.fromString(path), values);
   }
@@ -1063,18 +1331,19 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addLongValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addLongValues(
-      final String path, final Long value1, final Long... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addLongValues(@NotNull final String path,
+                                             @NotNull final Long value1,
+                                             @Nullable final Long... values)
+      throws ScimException
   {
     return addLongValues(path, toList(value1, values));
   }
@@ -1082,14 +1351,14 @@ public abstract class PatchOperation
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    */
-  public static PatchOperation addLongValues(
-      final Path path, final List<Long> values)
+  @NotNull
+  public static PatchOperation addLongValues(@NotNull final Path path,
+                                             @NotNull final List<Long> values)
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(Long value : values)
@@ -1102,15 +1371,16 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addLongValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    */
-  public static PatchOperation addLongValues(
-      final Path path, final Long value1, final Long... values)
+  @NotNull
+  public static PatchOperation addLongValues(@NotNull final Path path,
+                                             @NotNull final Long value1,
+                                             @Nullable final Long... values)
   {
     return addLongValues(path, toList(value1, values));
   }
@@ -1118,53 +1388,52 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final Long value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final Long value)
+      throws ScimException
   {
     return replace(path, LongNode.valueOf(value));
   }
 
   /**
-   * Create a new replace patch operation.
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    */
-  public static PatchOperation replace(
-      final Path path, final Long value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final Long value)
   {
     return replace(path, LongNode.valueOf(value));
   }
 
-  // Date
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation addDateValues(
-      final String path, final List<Date> values) throws ScimException
+  @NotNull
+  public static PatchOperation addDateValues(@NotNull final String path,
+                                             @NotNull final List<Date> values)
+      throws ScimException
   {
     return addDateValues(Path.fromString(path), values);
   }
@@ -1172,34 +1441,41 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addDateValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addDateValues(
-      final String path, final Date value1, final Date... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addDateValues(@NotNull final String path,
+                                             @NotNull final Date value1,
+                                             @Nullable final Date... values)
+      throws ScimException
   {
     return addDateValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   *
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    * @throws ScimException if an error occurs.
    */
-  public static PatchOperation addDateValues(
-      final Path path, final List<Date> values) throws ScimException
+  @NotNull
+  public static PatchOperation addDateValues(@NotNull final Path path,
+                                             @NotNull final List<Date> values)
+      throws ScimException
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(Date value : values)
@@ -1212,18 +1488,19 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addDateValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addDateValues(
-      final Path path, final Date value1, final Date... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addDateValues(@NotNull final Path path,
+                                             @NotNull final Date value1,
+                                             @Nullable final Date... values)
+      throws ScimException
   {
     return addDateValues(path, toList(value1, values));
   }
@@ -1231,18 +1508,16 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final Date value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final Date value)
+      throws ScimException
   {
     String valueString =
         GenericScimResource.getDateJsonNode(value).textValue();
@@ -1250,39 +1525,43 @@ public abstract class PatchOperation
   }
 
   /**
-   * Create a new replace patch operation.
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException if an error occurs.
    */
-  public static PatchOperation replace(
-      final Path path, final Date value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final Date value)
+      throws ScimException
   {
     String valueString =
         GenericScimResource.getDateJsonNode(value).textValue();
     return replace(path, valueString);
   }
 
-  // Binary
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
+   * @param path The path targeted by this patch operation.
    * @param values The value(s) to add.
    *
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
+  @NotNull
   public static PatchOperation addBinaryValues(
-      final String path, final List<byte[]> values) throws ScimException
+      @NotNull final String path,
+      @NotNull final List<byte[]> values)
+          throws ScimException
   {
     return addBinaryValues(Path.fromString(path), values);
   }
@@ -1290,33 +1569,40 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addBinaryValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addBinaryValues(
-      final String path, final byte[] value1, final byte[]... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addBinaryValues(@NotNull final String path,
+                                               @NotNull final byte[] value1,
+                                               @Nullable final byte[]... values)
+      throws ScimException
   {
     return addBinaryValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   *
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    */
+  @NotNull
   public static PatchOperation addBinaryValues(
-      final Path path, final List<byte[]> values)
+      @NotNull final Path path,
+      @NotNull final List<byte[]> values)
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(byte[] value : values)
@@ -1329,15 +1615,16 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addBinaryValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    */
-  public static PatchOperation addBinaryValues(
-      final Path path, final byte[] value1, final byte[]... values)
+  @NotNull
+  public static PatchOperation addBinaryValues(@NotNull final Path path,
+                                               @NotNull final byte[] value1,
+                                               @Nullable final byte[]... values)
   {
     return addBinaryValues(path, toList(value1, values));
   }
@@ -1345,55 +1632,55 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final byte[] value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final byte[] value)
+      throws ScimException
   {
     String valueString = Base64Variants.getDefaultVariant().encode(value);
     return replace(path, valueString);
   }
 
   /**
-   * Create a new replace patch operation.
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    */
-  public static PatchOperation replace(
-      final Path path, final byte[] value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final byte[] value)
   {
     String valueString = Base64Variants.getDefaultVariant().encode(value);
     return replace(path, valueString);
   }
 
-  // URI
   /**
    * Create a new add patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation addURIValues(
-      final String path, final List<URI> values) throws ScimException
+  @NotNull
+  public static PatchOperation addURIValues(@NotNull final String path,
+                                            @NotNull final List<URI> values)
+      throws ScimException
   {
     return addURIValues(Path.fromString(path), values);
   }
@@ -1401,33 +1688,39 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addURIValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    *
    * @throws ScimException  If the path is invalid.
    */
-  public static PatchOperation addURIValues(
-      final String path, final URI value1, final URI... values)
-          throws ScimException
+  @NotNull
+  public static PatchOperation addURIValues(@NotNull final String path,
+                                            @NotNull final URI value1,
+                                            @Nullable final URI... values)
+      throws ScimException
   {
     return addURIValues(path, toList(value1, values));
   }
 
   /**
-   * Create a new add patch operation.
+   * Create a new add patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
+   *
+   * @param path The path targeted by this patch operation.
    * @param values The values to add.
    *
    * @return The new add patch operation.
    */
-  public static PatchOperation addURIValues(
-      final Path path, final List<URI> values)
+  @NotNull
+  public static PatchOperation addURIValues(@NotNull final Path path,
+                                            @NotNull final List<URI> values)
   {
     ArrayNode arrayNode = JsonUtils.getJsonNodeFactory().arrayNode();
     for(URI value : values)
@@ -1440,15 +1733,16 @@ public abstract class PatchOperation
   /**
    * Alternate version of {@link #addURIValues(String, List)}.
    *
-   * @param path    The attribute path targeted by this patch operation. The
-   *                path must not be {@code null}.
-   * @param value1  The first value. This must not be {@code null}.
+   * @param path    The attribute path targeted by this patch operation.
+   * @param value1  The first value.
    * @param values  An optional field for additional values. Any {@code null}
    *                values will be ignored.
    * @return        A new PatchOperation with an opType of {@code "add"}.
    */
-  public static PatchOperation addURIValues(
-      final Path path, final URI value1, final URI... values)
+  @NotNull
+  public static PatchOperation addURIValues(@NotNull final Path path,
+                                            @NotNull final URI value1,
+                                            @Nullable final URI... values)
   {
     return addURIValues(path, toList(value1, values));
   }
@@ -1456,18 +1750,35 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "{@code userName}"
-   * @param value The value(s) to replace.  The value must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(
-      final String path, final URI value) throws ScimException
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final URI value)
+      throws ScimException
+  {
+    return replace(path, value.toString());
+  }
+
+  /**
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
+   *
+   * @return The new replace patch operation.
+   */
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final URI value)
   {
     return replace(path, value.toString());
   }
@@ -1475,26 +1786,12 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    */
-  public static PatchOperation replace(
-      final Path path, final URI value)
-  {
-    return replace(path, value.toString());
-  }
-
-  /**
-   * Create a new replace patch operation.
-   *
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
-   *
-   * @return The new replace patch operation.
-   */
-  public static PatchOperation replace(final ObjectNode value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final ObjectNode value)
   {
     return replace((Path) null, value);
   }
@@ -1502,32 +1799,39 @@ public abstract class PatchOperation
   /**
    * Create a new replace patch operation.
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   *             Path string examples:
-   *               "{@code userName eq 'bjensen'}"
-   *               "userName"
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation replace(final String path, final JsonNode value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final String path,
+                                       @NotNull final JsonNode value)
       throws ScimException
   {
     return replace(Path.fromString(path), value);
   }
 
   /**
-   * Create a new replace patch operation.
+   * Create a new replace patch operation. Example paths include:
+   * <ul>
+   *   <li> {@code userName}
+   *   <li> {@code emails[type eq "work"]}
+   * </ul>
    *
-   * @param path The path targeted by this patch operation.  The path
-   *             must not be {@code null}.
-   * @param value The value(s) to replace.  The value(s) must not be {@code null}.
+   * If a {@code null} path is desired, use the {@link #replace(ObjectNode)}
+   * method, as this is more concise and will also ensure that the JSON value
+   * is an ObjectNode.
+   *
+   * @param path The path targeted by this patch operation.
+   * @param value The value(s) to replace.
    *
    * @return The new replace patch operation.
    */
-  public static PatchOperation replace(final Path path, final JsonNode value)
+  @NotNull
+  public static PatchOperation replace(@NotNull final Path path,
+                                       @NotNull final JsonNode value)
   {
     try
     {
@@ -1547,7 +1851,9 @@ public abstract class PatchOperation
    * @return The new delete patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation remove(final String path) throws ScimException
+  @NotNull
+  public static PatchOperation remove(@NotNull final String path)
+      throws ScimException
   {
     return remove(Path.fromString(path));
   }
@@ -1559,7 +1865,8 @@ public abstract class PatchOperation
    *
    * @return The new delete patch operation.
    */
-  public static PatchOperation remove(final Path path)
+  @NotNull
+  public static PatchOperation remove(@NotNull final Path path)
   {
     try
     {
@@ -1575,15 +1882,20 @@ public abstract class PatchOperation
    * Create a new patch operation based on the parameters provided.
    *
    * @param opType The operation type.
-   * @param path The path targeted by this patch operation.
-   * @param value The value(s).
+   * @param path   The path targeted by this patch operation. This may not be
+   *               {@code null}. If a {@code null} path is desired, see the
+   *               class-level Javadoc for more details.
+   * @param value  The value(s). This field will be ignored for {@code remove}
+   *               operations.
    *
    * @return The new patch operation.
    * @throws ScimException If the path is invalid.
    */
-  public static PatchOperation create(final PatchOpType opType,
-                                      final String path,
-                                      final JsonNode value) throws ScimException
+  @NotNull
+  public static PatchOperation create(@NotNull final PatchOpType opType,
+                                      @NotNull final String path,
+                                      @NotNull final JsonNode value)
+      throws ScimException
   {
     return create(opType, Path.fromString(path), value);
   }
@@ -1592,14 +1904,18 @@ public abstract class PatchOperation
    * Create a new patch operation based on the parameters provided.
    *
    * @param opType The operation type.
-   * @param path The path targeted by this patch operation.
-   * @param value The value(s).
+   * @param path   The path targeted by this patch operation. This may not be
+   *               {@code null}. If a {@code null} path is desired, see the
+   *               class-level Javadoc for more details.
+   * @param value  The value(s). This field will be ignored for {@code remove}
+   *               operations.
    *
    * @return The new patch operation.
    */
-  public static PatchOperation create(final PatchOpType opType,
-                                      final Path path,
-                                      final JsonNode value)
+  @NotNull
+  public static PatchOperation create(@NotNull final PatchOpType opType,
+                                      @NotNull final Path path,
+                                      @NotNull final JsonNode value)
   {
     switch (opType)
     {
@@ -1626,9 +1942,10 @@ public abstract class PatchOperation
    *
    * @throws ScimException  If the provided value is {@code null} or invalid.
    */
-  private static void validateOperationValue(final Path path,
-      final JsonNode value, final PatchOpType type)
-          throws ScimException
+  private static void validateOperationValue(@Nullable final Path path,
+                                             @Nullable final JsonNode value,
+                                             @NotNull final PatchOpType type)
+      throws ScimException
   {
     if (value == null || value.isNull() ||
             (value.isObject() && value.size() == 0))

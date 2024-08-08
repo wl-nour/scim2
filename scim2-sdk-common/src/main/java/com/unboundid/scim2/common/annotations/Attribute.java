@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2023 Ping Identity Corporation
+ * Copyright 2015-2024 Ping Identity Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License (GPLv2 only)
@@ -19,6 +19,7 @@ package com.unboundid.scim2.common.annotations;
 
 
 import com.unboundid.scim2.common.types.AttributeDefinition;
+import com.unboundid.scim2.common.types.UserResource;
 
 import javax.lang.model.type.NullType;
 import java.lang.annotation.ElementType;
@@ -27,7 +28,14 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation for getter methods of a SCIM object.
+ * This annotation is used to record useful properties about attributes on SCIM
+ * resources. This helps display attribute definitions directly on member
+ * variables of a class, where the class represents a SCIM resource type. For
+ * example, if an attribute must be provided when a resource type is created,
+ * the {@link #isRequired} field should be {@code true}.
+ * <br><br>
+ * The {@link UserResource} class uses this annotation to highlight attribute
+ * definitions that are defined in RFC 7643.
  */
 @Retention(value = RetentionPolicy.RUNTIME)
 @Target(value = ElementType.FIELD)
@@ -52,20 +60,21 @@ public @interface Attribute
    *
    * @return The description of the attribute.
    */
-  String description();
+  @NotNull String description();
 
   /**
    * The canonical values that may appear in an attribute.
    *
    * @return The canonical values that may appear in an attribute.
    */
-  String[] canonicalValues() default {};
+  @NotNull String[] canonicalValues() default {};
 
   /**
    * The return constraint for the attribute.
    *
    * @return The return constraint for the attribute.
    */
+  @NotNull
   AttributeDefinition.Returned returned()
       default AttributeDefinition.Returned.DEFAULT;
 
@@ -74,6 +83,7 @@ public @interface Attribute
    *
    * @return The uniqueness constraint for the attribute.
    */
+  @NotNull
   AttributeDefinition.Uniqueness uniqueness()
       default AttributeDefinition.Uniqueness.NONE;
 
@@ -82,15 +92,16 @@ public @interface Attribute
    *
    * @return The reference types for the attribute.
    */
-  String[] referenceTypes() default {};
+  @NotNull String[] referenceTypes() default {};
 
   /**
    * The mutability constraint for the attribute.
    *
    * @return The mutability constraint for the attribute.
    */
-  AttributeDefinition.Mutability mutability() default
-      AttributeDefinition.Mutability.READ_WRITE;
+  @NotNull
+  AttributeDefinition.Mutability mutability()
+      default AttributeDefinition.Mutability.READ_WRITE;
 
   /**
    * If the attribute is multi-value, this holds the type of the
@@ -98,5 +109,5 @@ public @interface Attribute
    *
    * @return For a multi-valued attribute, the type of the child object.
    */
-  Class multiValueClass() default NullType.class;
+  @NotNull Class<?> multiValueClass() default NullType.class;
 }

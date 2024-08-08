@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2023 Ping Identity Corporation
+ * Copyright 2015-2024 Ping Identity Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License (GPLv2 only)
@@ -17,6 +17,8 @@
 
 package com.unboundid.scim2.common.messages;
 
+
+import com.unboundid.scim2.common.annotations.NotNull;
 
 /**
  * This enumeration defines the set of possible operation types that may
@@ -45,6 +47,7 @@ public enum PatchOpType
   /**
    * The lower case string value for this operation type.
    */
+  @NotNull
   private String stringValue;
 
 
@@ -53,7 +56,7 @@ public enum PatchOpType
    *
    * @param stringValue The lower case string value for this operation type.
    */
-  PatchOpType(final String stringValue)
+  PatchOpType(@NotNull final String stringValue)
   {
     this.stringValue = stringValue;
   }
@@ -64,6 +67,7 @@ public enum PatchOpType
    *
    * @return The lower case string value for this operation type.
    */
+  @NotNull
   public String getStringValue()
   {
     return stringValue;
@@ -75,6 +79,7 @@ public enum PatchOpType
    *
    * @return A string representation of this operation type.
    */
+  @NotNull
   public String toString()
   {
     return getStringValue();
