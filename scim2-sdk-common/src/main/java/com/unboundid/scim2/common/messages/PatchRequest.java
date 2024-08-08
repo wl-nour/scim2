@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2023 Ping Identity Corporation
+ * Copyright 2015-2024 Ping Identity Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License (GPLv2 only)
@@ -19,6 +19,8 @@ package com.unboundid.scim2.common.messages;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.unboundid.scim2.common.annotations.NotNull;
+import com.unboundid.scim2.common.annotations.Nullable;
 import com.unboundid.scim2.common.annotations.Schema;
 import com.unboundid.scim2.common.annotations.Attribute;
 import com.unboundid.scim2.common.exceptions.ScimException;
@@ -32,7 +34,39 @@ import java.util.List;
 import static com.unboundid.scim2.common.utils.StaticUtils.toList;
 
 /**
- * Class representing a SCIM 2 patch request.
+ * This class represents a SCIM 2 PATCH request. A patch request contains a list
+ * of {@link PatchOperation} elements, where each patch operation represents a
+ * change that should be applied to a SCIM resource. The following is an example
+ * of a patch request in JSON form:
+ * <pre>
+ * {
+ *   "schemas": [
+ *     "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+ *   ],
+ *   "Operations": [
+ *     {
+ *       "op": "replace",
+ *       "path": "active",
+ *       "value": true
+ *     }
+ *   ]
+ * }
+ * </pre>
+ *
+ * This example request contains a single operation that sets the {@code active}
+ * value to {@code true}. This request can be created with the following Java
+ * code:
+ * <pre>
+ *   PatchRequest request = new PatchRequest(
+ *       PatchOperation.replace("active", true)
+ *   );
+ * </pre>
+ *
+ * All patch requests are performed atomically. RFC 7644 Section 3.5.2 states
+ * that if any operation within the operation list fails, then the resource
+ * SHALL not be updated at all.
+ *
+ * @see PatchOperation
  */
 @Schema(id="urn:ietf:params:scim:api:messages:2.0:PatchOp",
     name="Patch Operation", description = "SCIM 2.0 Patch Operation Request")
@@ -40,6 +74,7 @@ public final class PatchRequest
     extends BaseScimResource
     implements Iterable<PatchOperation>
 {
+  @NotNull
   @Attribute(description = "Patch Operations")
   @JsonProperty(value = "Operations", required = true)
   private final List<PatchOperation> operations;
@@ -51,7 +86,7 @@ public final class PatchRequest
    */
   @JsonCreator
   public PatchRequest(
-      @JsonProperty(value = "Operations", required = true)
+      @NotNull @JsonProperty(value = "Operations", required = true)
       final List<PatchOperation> operations)
   {
     this.operations = Collections.unmodifiableList(operations);
@@ -65,8 +100,8 @@ public final class PatchRequest
    * @param operations  An optional field for additional patch operations. Any
    *                    {@code null} values will be ignored.
    */
-  public PatchRequest(final PatchOperation operation,
-                      final PatchOperation... operations)
+  public PatchRequest(@NotNull final PatchOperation operation,
+                      @Nullable final PatchOperation... operations)
   {
     this(toList(operation, operations));
   }
@@ -76,6 +111,7 @@ public final class PatchRequest
    *
    * @return The individual operations in this patch request.
    */
+  @NotNull
   public List<PatchOperation> getOperations()
   {
     return Collections.unmodifiableList(operations);
@@ -85,6 +121,7 @@ public final class PatchRequest
    * {@inheritDoc}
    */
   @Override
+  @NotNull
   public Iterator<PatchOperation> iterator()
   {
     return getOperations().iterator();
@@ -97,7 +134,8 @@ public final class PatchRequest
    *
    * @throws ScimException If the one or more patch operations is invalid.
    */
-  public void apply(final GenericScimResource object) throws ScimException
+  public void apply(@NotNull final GenericScimResource object)
+      throws ScimException
   {
     for(PatchOperation operation : this)
     {
@@ -106,10 +144,14 @@ public final class PatchRequest
   }
 
   /**
-   * {@inheritDoc}
+   * Indicates whether the provided object is equal to this patch request.
+   *
+   * @param o   The object to compare.
+   * @return    {@code true} if the provided object is equal to this patch
+   *            request, or {@code false} if not.
    */
   @Override
-  public boolean equals(final Object o)
+  public boolean equals(@Nullable final Object o)
   {
     if (this == o)
     {
@@ -135,7 +177,9 @@ public final class PatchRequest
   }
 
   /**
-   * {@inheritDoc}
+   * Retrieves a hash code for this patch request.
+   *
+   * @return  A hash code for this patch request.
    */
   @Override
   public int hashCode()

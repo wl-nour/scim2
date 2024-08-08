@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2023 Ping Identity Corporation
+ * Copyright 2015-2024 Ping Identity Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License (GPLv2 only)
@@ -34,20 +34,19 @@ public @interface Schema
    *
    * @return The object's id as a URN.
    */
-  String id() default "urn:pingidentity:scim:api:messages:2.0";
+  @NotNull String id() default "urn:pingidentity:scim:api:messages:2.0";
 
   /**
    * The description for the object.
    *
    * @return The object's description.
    */
-  String description();
+  @NotNull String description();
 
   /**
-   * The name for the object.  This is a human readable
-   * name.
+   * The human-readable name for the object.
    *
    * @return The object's human-readable name.
    */
-  String name();
+  @NotNull String name();
 }
