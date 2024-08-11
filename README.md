@@ -1,6 +1,9 @@
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.unboundid.product.scim2/scim2-parent/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.unboundid.product.scim2/scim2-parent)
-[![Javadocs](http://javadoc.io/badge/com.unboundid.product.scim2/scim2-parent.svg)](http://javadoc.io/doc/com.unboundid.product.scim2/scim2-parent) 
-[![Build Status](https://travis-ci.org/pingidentity/scim2.svg?branch=master)](https://travis-ci.org/pingidentity/scim2)
+## Release Notes
+This is a minor release forked out from `scim2-2.4.0`
+## scim2-2.4.0.1
+- **New Features**:
+  - Added support for patch operations of type ADD that contain a value selection filter in the path.
+
 # SCIM 2 SDK
  [SCIM](https://www.simplecloud.info), or _System for Cross-domain Identity Management_, is an IETF standard that defines an extensible schema mechanism and REST API for **managing users and other identity data**. SCIM is used by a variety of vendors — including Facebook, Salesforce, Microsoft, Cisco, Sailpoint, and Ping Identity — for a variety of purposes, including user provisioning, directory services, attribute exchange, and more.
 
